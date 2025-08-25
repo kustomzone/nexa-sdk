@@ -1,5 +1,8 @@
 name: NexaCLI on Windows
 
+env:
+  BACKENDS: "dml,cuda"
+
 on:
   push:
     tags:
@@ -8,11 +11,12 @@ on:
 
 jobs:
   build-cli:
-    name: windows_${{ matrix.arch }}
+    name: windows_${{ matrix.arch }}_${{ matrix.backend }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
+        backend: [dml, cuda]
         include:
           - runner: sdk-windows-8-core-2
             arch: x86_64
@@ -47,6 +51,23 @@ jobs:
           cd runner
           make download ARCH=${{ matrix.arch }}
 
+      - name: Remove other backend plugins
+        shell: pwsh
+        run: |
+          cd runner/build
+          $backends = "${{ env.BACKENDS }}" -split ","
+          $currentBackend = "${{ matrix.backend }}"
+          
+          foreach ($backend in $backends) {
+            if ($backend -ne $currentBackend) {
+              $pattern = "*_${backend}*"
+              Get-ChildItem -Directory -Name $pattern | ForEach-Object {
+                Write-Host "Removing $_ (backend: $backend)"
+                Remove-Item $_ -Recurse -Force
+              }
+            }
+          }
+
       - name: Build Nexa Cli
         run: |
           cd runner
@@ -56,24 +77,26 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nexa-cli_windows_${{ matrix.arch }}
+          name: ${{ matrix.backend == 'dml' && format('nexa-cli_windows_{0}', matrix.arch) || format('nexa-cli_windows_{0}_{1}', matrix.arch, matrix.backend) }}
           path: runner/build
           include-hidden-files: true
 
   build-installer:
-    name: Build Windows Installer & Release
+    name: Build Windows Installer & Release (${{ matrix.backend }})
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: build-cli
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
+        backend: [dml, cuda]
         include:
           - runner: sdk-windows-8-core-2
             arch: x86_64
     env:
       VERSION: ${{ github.ref_name }}
       ARCH: ${{ matrix.arch }}
+      BACKEND: ${{ matrix.backend }}
 
     steps:
       - name: Checkout repository
@@ -82,7 +105,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          name: nexa-cli_windows_${{ matrix.arch }}
+          name: ${{ matrix.backend == 'dml' && format('nexa-cli_windows_{0}', matrix.arch) || format('nexa-cli_windows_{0}_{1}', matrix.arch, matrix.backend) }}
           path: artifacts
 
       - uses: actions/setup-python@v5
@@ -95,7 +118,8 @@ jobs:
 
       - name: Build launcher with PyInstaller
         run: |
-          pyinstaller --onefile --noconsole --distpath artifacts --name "nexa-cli-launcher" --icon="runner/release/windows/nexa_logo.ico" runner/release/windows/nexa_launcher.py
+          $launcherName = if ("${{ matrix.backend }}" -eq "dml") { "nexa-cli-launcher" } else { "nexa-cli-launcher-${{ matrix.backend }}" }
+          pyinstaller --onefile --noconsole --distpath artifacts --name $launcherName --icon="runner/release/windows/nexa_logo.ico" runner/release/windows/nexa_launcher.py
 
       - name: Setup .NET Core SDK
         uses: actions/setup-dotnet@v4.1.0
@@ -119,6 +143,7 @@ jobs:
               $_.FullName
           }
 
+          $launcherName = if ("${{ matrix.backend }}" -eq "dml") { "nexa-cli-launcher.exe" } else { "nexa-cli-launcher-${{ matrix.backend }}.exe" }
           azuresigntool sign `
             -kvu "${{ secrets.AZURE_KEY_VAULT_URI }}" `
             -kvc "${{ secrets.AZURE_CERT_NAME }}" `
@@ -127,7 +152,7 @@ jobs:
             --azure-key-vault-tenant-id "${{ secrets.AZURE_TENANT_ID }}" `
             -tr http://timestamp.globalsign.com/tsa/advanced `
             -td sha256 `
-            "artifacts\nexa-cli-launcher.exe"
+            "artifacts\$launcherName"
 
       - name: Compile Installer
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.6
@@ -146,7 +171,7 @@ jobs:
             --azure-key-vault-tenant-id "${{ secrets.AZURE_TENANT_ID }}" `
             -tr http://timestamp.globalsign.com/tsa/advanced `
             -td sha256 `
-            "artifacts/nexa-cli_windows_${{ matrix.arch }}.exe"
+            "artifacts/$(if ("${{ matrix.backend }}" -eq "dml") { "nexa-cli_windows_${{ matrix.arch }}.exe" } else { "nexa-cli_windows_${{ matrix.arch }}_${{ matrix.backend }}.exe" })"
 
       - name: Create GitHub Release
         id: create_release
@@ -154,7 +179,7 @@ jobs:
         with:
           repository: NexaAI/nexa-sdk
           tag_name: ${{ env.VERSION }}
-          files: artifacts/nexa-cli_windows_${{ matrix.arch }}.exe
+          files: artifacts/${{ matrix.backend == 'dml' && format('nexa-cli_windows_{0}.exe', matrix.arch) || format('nexa-cli_windows_{0}_{1}.exe', matrix.arch, matrix.backend) }}
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.ZACK_ACCESS_TOKEN }}
