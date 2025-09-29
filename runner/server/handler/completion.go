@@ -16,47 +16,12 @@ import (
 	"github.com/NexaAI/nexa-sdk/runner/internal/store"
 	"github.com/NexaAI/nexa-sdk/runner/internal/types"
 	nexa_sdk "github.com/NexaAI/nexa-sdk/runner/nexa-sdk"
-	"github.com/NexaAI/nexa-sdk/runner/server/handler/utils"
 	"github.com/NexaAI/nexa-sdk/runner/server/service"
+	"github.com/NexaAI/nexa-sdk/runner/server/utils"
 )
 
-// @Router			/completions [post]
-// @Summary		completion
-// @Description	Legacy completion endpoint for text generation. It is recommended to use the Chat Completions endpoint for new applications.
-// @Accept			json
-// @Param			request	body	openai.CompletionNewParams	true	"Completion request"
-// @Produce		json
-// @Success		200	{object}	openai.Completion
 func Completions(c *gin.Context) {
-	param := openai.CompletionNewParams{}
-	if err := c.ShouldBindJSON(&param); err != nil {
-		c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
-
-	p, err := service.KeepAliveGet[nexa_sdk.LLM](
-		string(param.Model),
-		types.ModelParam{NCtx: 4096},
-		c.GetHeader("Nexa-KeepCache") != "true",
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-
-	data, err := p.Generate(nexa_sdk.LlmGenerateInput{
-		PromptUTF8: param.Prompt.OfString.String(),
-	})
-	choice := openai.CompletionChoice{}
-	choice.Text = data.FullText
-	res := openai.Completion{
-		Choices: []openai.CompletionChoice{choice},
-	}
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
-	} else {
-		c.JSON(http.StatusOK, res)
-	}
+	c.JSON(http.StatusGone, map[string]any{"error": "this endpoint is deprecated, please use /chat/completions instead"})
 }
 
 type ChatCompletionNewParams openai.ChatCompletionNewParams
@@ -108,7 +73,7 @@ func chatCompletionsLLM(c *gin.Context, param ChatCompletionRequest) {
 	// Get LLM instance
 	p, err := service.KeepAliveGet[nexa_sdk.LLM](
 		string(param.Model),
-		types.ModelParam{NCtx: 4096},
+		types.ModelParam{NCtx: 4096, NGpuLayers: 999},
 		c.GetHeader("Nexa-KeepCache") != "true",
 	)
 	if errors.Is(err, os.ErrNotExist) {
@@ -275,7 +240,7 @@ func chatCompletionsVLM(c *gin.Context, param ChatCompletionRequest) {
 	// Get VLM instance
 	p, err := service.KeepAliveGet[nexa_sdk.VLM](
 		string(param.Model),
-		types.ModelParam{NCtx: 4096},
+		types.ModelParam{NCtx: 4096, NGpuLayers: 999	},
 		c.GetHeader("Nexa-KeepCache") != "true",
 	)
 	if errors.Is(err, os.ErrNotExist) {
