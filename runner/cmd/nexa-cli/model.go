@@ -143,9 +143,17 @@ func list() *cobra.Command {
 				})
 			}
 		} else {
-			tw.AppendHeader(table.Row{"NAME", "SIZE"})
+			tw.AppendHeader(table.Row{"NAME", "SIZE", "QUANTS"})
 			for _, model := range models {
-				tw.AppendRow(table.Row{model.Name, humanize.IBytes(uint64(model.GetSize()))})
+				tw.AppendRow(table.Row{model.Name, humanize.IBytes(uint64(model.GetSize())), strings.Join(func() []string {
+					quants := make([]string, 0)
+					for q := range model.ModelFile {
+						if model.ModelFile[q].Downloaded && q != "N/A" {
+							quants = append(quants, q)
+						}
+					}
+					return quants
+				}(), ",")})
 			}
 		}
 		tw.Render()
@@ -330,6 +338,8 @@ func chooseModelType() (types.ModelType, error) {
 	return modelType, nil
 }
 
+var partRegex = regexp.MustCompile(`-\d+-of-\d+\.gguf$`)
+
 func chooseFiles(name string, files []model_hub.ModelFileInfo, res *types.ModelManifest) (err error) {
 	if len(files) == 0 {
 		err = fmt.Errorf("repo is empty")
@@ -464,6 +474,11 @@ func chooseFiles(name string, files []model_hub.ModelFileInfo, res *types.ModelM
 				res.MMProjFile.Name = onnxFiles[0].Name
 				res.MMProjFile.Size = onnxFiles[0].Size
 				res.MMProjFile.Downloaded = true
+			} else if len(nexaFiles) == 1 {
+				// fallback to nexa file as mmproj if no onnx file and exactly one nexa file exists
+				res.MMProjFile.Name = nexaFiles[0].Name
+				res.MMProjFile.Size = nexaFiles[0].Size
+				res.MMProjFile.Downloaded = true
 			}
 		case 1:
 			res.MMProjFile.Name = mmprojs[0].Name
@@ -497,13 +512,16 @@ func chooseFiles(name string, files []model_hub.ModelFileInfo, res *types.ModelM
 			return fmt.Errorf("multiple tokenizer files found: %v. Expected exactly one tokenizer file", tokenizers)
 		}
 
-		// Always include .nexa files as extra files when gguf is the main model
+		// Always include .nexa files as extra files when gguf is the main model, except if used as mmproj
 		for _, nexaFile := range nexaFiles {
-			res.ExtraFiles = append(res.ExtraFiles, types.ModelFileInfo{
-				Name:       nexaFile.Name,
-				Downloaded: true,
-				Size:       nexaFile.Size,
-			})
+			// Skip if this nexa file is being used as mmproj
+			if res.MMProjFile.Name != nexaFile.Name {
+				res.ExtraFiles = append(res.ExtraFiles, types.ModelFileInfo{
+					Name:       nexaFile.Name,
+					Downloaded: true,
+					Size:       nexaFile.Size,
+				})
+			}
 		}
 
 		// Always include .npy files as extra files when gguf is the main model
